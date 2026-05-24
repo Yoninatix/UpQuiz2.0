@@ -1,0 +1,191 @@
+version: "3.9"
+
+services:
+  # ─── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: examdb-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-examdb}
+      POSTGRES_USER: ${POSTGRES_USER:-examuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exampassword}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-examuser} -d ${POSTGRES_DB:-examdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - examnet
+
+  # ─── Milvus (standalone, no Kubernetes required) ────────────────────────────
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: milvus-etcd
+    restart: unless-stopped
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+    networks:
+      - examnet
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-13T19-46-17Z
+    container_name: milvus-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - minio_data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - examnet
+
+  milvus-standalone:
+    image: milvusdb/milvus:v2.4.4
+    container_name: milvus-standalone
+    restart: unless-stopped
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - etcd
+      - minio
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - examnet
+
+  # ─── Ollama (local LLM runtime) ──────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    # GPU support: uncomment below if you have NVIDIA GPU + nvidia-docker
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+    networks:
+      - examnet
+
+  # ─── Go Backend API ──────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: exam-backend
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-examdb}
+      POSTGRES_USER: ${POSTGRES_USER:-examuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exampassword}
+      JWT_SECRET: ${JWT_SECRET:-changeme_secret}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      AI_SERVICE_URL: http://ai-service:3001
+      PORT: 8080
+      ENV: ${GO_ENV:-development}
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - examnet
+    volumes:
+      - uploads_data:/app/uploads
+
+  # ─── TypeScript AI Service (RAG + Embeddings) ────────────────────────────────
+  ai-service:
+    build:
+      context: ./ai-service
+      dockerfile: Dockerfile
+    container_name: exam-ai-service
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+      MILVUS_HOST: milvus-standalone
+      MILVUS_PORT: 19530
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-document_chunks}
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma:2b}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-examdb}
+      POSTGRES_USER: ${POSTGRES_USER:-examuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exampassword}
+    ports:
+      - "3001:3001"
+    depends_on:
+      - milvus-standalone
+      - ollama
+      - postgres
+    networks:
+      - examnet
+    volumes:
+      - uploads_data:/app/uploads
+
+  # ─── React Frontend ──────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:8080/api}
+        VITE_AI_SERVICE_URL: ${VITE_AI_SERVICE_URL:-http://localhost:3001}
+    container_name: exam-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    networks:
+      - examnet
+
+# ─── Volumes ──────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+  etcd_data:
+  minio_data:
+  milvus_data:
+  ollama_data:
+  uploads_data:
+
+# ─── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  examnet:
+    driver: bridge

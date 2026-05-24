@@ -1,0 +1,40 @@
+# Environment
+.env
+*.env.local
+
+# Go
+backend/vendor/
+backend/tmp/
+*.exe
+*.test
+
+# Node / TypeScript
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+
+# Frontend build
+frontend/dist/
+frontend/node_modules/
+
+# AI service
+ai-service/dist/
+ai-service/node_modules/
+
+# Docker volumes (local dev data)
+volumes/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
