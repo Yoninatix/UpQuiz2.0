@@ -6,7 +6,7 @@ import { BookOpen, Sparkles, ClipboardCheck, BarChart2, ChevronRight, Zap } from
 const cards = [
   {
     label: 'Subjects & Materials',
-    desc: 'Create subjects and upload PDF learning materials for processing.',
+    desc: 'Create subjects and upload learning materials for processing.',
     to: '/educator/subjects',
     icon: BookOpen,
     gradient: 'bg-gradient-blue',
@@ -14,7 +14,7 @@ const cards = [
   },
   {
     label: 'Generate Questions',
-    desc: 'Use the RAG pipeline to auto-generate exam questions from your PDFs.',
+    desc: 'Use the RAG pipeline to auto-generate exam questions from your materials.',
     to: '/educator/subjects',
     icon: Sparkles,
     gradient: 'bg-gradient-card',
@@ -95,7 +95,7 @@ export default function EducatorDashboard() {
         <div>
           <p className="text-sm font-semibold text-primary-800">Getting started</p>
           <p className="text-xs text-primary-600 mt-0.5">
-            Start by creating a <strong>Subject</strong>, then upload a PDF. Once processed, hit{' '}
+            Start by creating a <strong>Subject</strong>, then upload a learning material. Once processed, hit{' '}
             <strong>Generate Questions</strong> and the AI will retrieve relevant content from your materials.
           </p>
         </div>

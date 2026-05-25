@@ -66,7 +66,7 @@ export default function DocumentsPage() {
     <Layout role="educator">
       <div className="page-header">
         <h1 className="page-title">Learning Materials</h1>
-        <p className="page-subtitle">Upload PDF files to build your question bank</p>
+        <p className="page-subtitle">Upload learning materials to build your question bank</p>
       </div>
 
       {/* Drop zone */}

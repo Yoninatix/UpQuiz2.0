@@ -9,7 +9,7 @@ interface FormData { email: string; password: string; }
 
 const features = [
   { icon: Brain,     label: 'AI-Generated Questions', desc: 'Powered by Gemma via Retrieval-Augmented Generation' },
-  { icon: BookOpen,  label: 'Smart PDF Processing',   desc: 'Upload materials and let the system do the rest' },
+  { icon: BookOpen,  label: 'Smart File Processing',   desc: 'Upload materials and let the system do the rest' },
   { icon: BarChart2, label: 'Rich Analytics',          desc: 'Track performance and identify weak topics instantly' },
 ];
 

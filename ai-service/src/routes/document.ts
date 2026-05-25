@@ -11,7 +11,7 @@ export const documentRouter = Router();
  * POST /api/document/process
  * Body: { document_id, subject_id, stored_path }
  *
- * Called by the Go backend after a PDF is uploaded.
+ * Called by the Go backend after a file is uploaded.
  * Orchestrates: extract → chunk → embed → store in Milvus → update Postgres.
  */
 documentRouter.post('/process', async (req: Request, res: Response) => {

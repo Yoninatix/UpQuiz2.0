@@ -116,6 +116,11 @@ services:
           -H "Content-Type: application/json" \
           -d "{\"name\":\"$$OLLAMA_MODEL\",\"stream\":false}"
         echo ""
+        echo "Pulling embedding model: nomic-embed-text"
+        curl -X POST http://ollama:11434/api/pull \
+          -H "Content-Type: application/json" \
+          -d "{\"name\":\"nomic-embed-text\",\"stream\":false}"
+        echo ""
         echo "Model pull complete."
     environment:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
