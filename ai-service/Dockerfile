@@ -4,14 +4,14 @@ FROM node:20-bookworm AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN npm install
 
 COPY tsconfig.json ./
 COPY src ./src
 RUN npm run build
 
 # Prune dev deps so only production modules are copied to runtime
-RUN npm ci --omit=dev --prefer-offline
+RUN npm install --omit=dev
 
 # ── Runtime stage — Debian Trixie slim ───────────────────────────────────────
 FROM debian:trixie-slim

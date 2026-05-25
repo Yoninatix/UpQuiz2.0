@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+import { api } from '../services/api';
 import {
   LayoutDashboard, Users, BookOpen, FileText, Sparkles,
   ClipboardCheck, BarChart2, LogOut, GraduationCap,
@@ -51,7 +52,11 @@ export default function Layout({ children, role }: Props) {
   const location = useLocation();
   const RoleIcon = roleIcons[role];
 
-  const handleLogout = () => { logout(); navigate('/login'); };
+  const handleLogout = async () => {
+    await api.post('/auth/logout').catch(() => {});
+    logout();
+    navigate('/login');
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">

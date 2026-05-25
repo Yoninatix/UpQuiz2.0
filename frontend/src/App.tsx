@@ -1,5 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useAuthStore } from './store/authStore';
+import { api } from './services/api';
 
 // ── Auth pages ───────────────────────────────────────────────
 import LoginPage from './pages/auth/LoginPage';
@@ -28,9 +30,34 @@ import ResultsPage from './pages/student/ResultsPage';
 // ── Layout ───────────────────────────────────────────────────
 import ProtectedRoute from './components/ProtectedRoute';
 
+// Hydrates user state from the auth_token cookie on every page load.
+// Shows a spinner while the check is in-flight so routing never sees
+// a false-null user state.
+function AuthInit({ children }: { children: ReactNode }) {
+  const setUser = useAuthStore(s => s.setUser);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    api.get('/auth/me')
+      .then(r => setUser(r.data))
+      .catch(() => {}) // 401 = no valid cookie, stay on login
+      .finally(() => setReady(true));
+  }, []);
+
+  if (!ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
+      <AuthInit>
       <Routes>
         {/* Public */}
         <Route path="/login" element={<LoginPage />} />
@@ -66,6 +93,7 @@ export default function App() {
         <Route path="/" element={<RootRedirect />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </AuthInit>
     </BrowserRouter>
   );
 }

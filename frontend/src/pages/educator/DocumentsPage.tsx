@@ -36,11 +36,14 @@ export default function DocumentsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['documents', subjectId] }),
   });
 
-  const ALLOWED_EXTS = ['.pdf', '.docx', '.txt', '.md'];
+  const ALLOWED_EXTS = [
+    '.pdf', '.docx', '.doc', '.pptx', '.xlsx', '.xls',
+    '.txt', '.md', '.csv', '.rtf', '.html', '.htm', '.odt',
+  ];
   const isAllowed = (name: string) => ALLOWED_EXTS.some(ext => name.toLowerCase().endsWith(ext));
 
   const doUpload = async (file: File) => {
-    if (!isAllowed(file.name)) { setUploadError('Unsupported file type. Allowed: PDF, DOCX, TXT, MD'); return; }
+    if (!isAllowed(file.name)) { setUploadError('Unsupported file type. Allowed: PDF, DOCX, DOC, PPTX, XLSX, TXT, MD, CSV, RTF, HTML, ODT'); return; }
     setUploading(true); setUploadError('');
     const form = new FormData();
     form.append('file', file);
@@ -80,12 +83,12 @@ export default function DocumentsPage() {
             <Upload className={`w-7 h-7 ${dragOver ? 'text-primary-600' : 'text-slate-400'}`} />
           </div>
           <div>
-            <p className="font-semibold text-slate-700">{uploading ? 'Uploading…' : 'Drop your PDF here'}</p>
-            <p className="text-slate-400 text-sm mt-0.5">or <span className="text-primary-600 font-medium">browse files</span> — PDF, DOCX, TXT, MD</p>
+            <p className="font-semibold text-slate-700">{uploading ? 'Uploading…' : 'Drop your file here'}</p>
+            <p className="text-slate-400 text-sm mt-0.5">or <span className="text-primary-600 font-medium">browse files</span> — PDF, DOCX, PPTX, XLSX, TXT, MD, CSV, RTF, HTML, ODT</p>
           </div>
           {uploading && <Loader2 className="w-5 h-5 text-primary-500 animate-spin" />}
         </div>
-        <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" className="hidden"
+        <input ref={fileRef} type="file" accept=".pdf,.docx,.doc,.pptx,.xlsx,.xls,.txt,.md,.csv,.rtf,.html,.htm,.odt" className="hidden"
           onChange={e => { const f = e.target.files?.[0]; if (f) doUpload(f); }} />
       </div>
 

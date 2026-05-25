@@ -57,8 +57,10 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("auth_token", token, 24*3600, "/", "", h.cfg.CookieSecure, true)
+
 	c.JSON(http.StatusOK, gin.H{
-		"token": token,
 		"user": gin.H{
 			"id":         user.ID,
 			"email":      user.Email,
@@ -96,6 +98,13 @@ func (h *AuthHandler) Register(c *gin.Context) {
 		"last_name":  user.LastName,
 		"role":       user.Role,
 	})
+}
+
+// POST /api/auth/logout
+func (h *AuthHandler) Logout(c *gin.Context) {
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("auth_token", "", -1, "/", "", h.cfg.CookieSecure, true)
+	c.JSON(http.StatusOK, gin.H{"message": "logged out"})
 }
 
 // GET /api/auth/me

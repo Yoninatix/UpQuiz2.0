@@ -2,25 +2,23 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/ccsthesis/examplatform/internal/auth"
 	"github.com/gin-gonic/gin"
 )
 
-// RequireAuth validates the JWT in the Authorization header.
+// RequireAuth reads the HMAC-signed JWT from the auth_token HTTP-only cookie.
 func RequireAuth(jwtSecret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		header := c.GetHeader("Authorization")
-		if header == "" || !strings.HasPrefix(header, "Bearer ") {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or malformed token"})
+		token, err := c.Cookie("auth_token")
+		if err != nil || token == "" {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid session"})
 			return
 		}
 
-		token := strings.TrimPrefix(header, "Bearer ")
 		claims, err := auth.ValidateToken(token, jwtSecret)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired token"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired session"})
 			return
 		}
 

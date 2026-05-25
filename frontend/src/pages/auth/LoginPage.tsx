@@ -15,7 +15,7 @@ const features = [
 
 export default function LoginPage() {
   const { register, handleSubmit, formState: { errors } } = useForm<FormData>();
-  const { setAuth } = useAuthStore();
+  const { setUser } = useAuthStore();
   const navigate = useNavigate();
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -24,7 +24,7 @@ export default function LoginPage() {
     setLoading(true); setError('');
     try {
       const res = await api.post('/auth/login', data);
-      setAuth(res.data.user, res.data.token);
+      setUser(res.data.user);
       const role = res.data.user.role as string;
       navigate(role === 'admin' ? '/admin' : role === 'educator' ? '/educator' : '/student');
     } catch (err: any) {

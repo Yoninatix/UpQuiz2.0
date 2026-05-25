@@ -20,10 +20,15 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	r := gin.Default()
 
 	// ── CORS ───────────────────────────────────────────────────────────────
+	// Reflect the request Origin so credentials (cookies) are allowed.
 	r.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
+		if origin := c.GetHeader("Origin"); origin != "" {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin")
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
 		c.Header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Authorization")
+		c.Header("Access-Control-Allow-Headers", "Origin,Content-Type")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
@@ -59,6 +64,7 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	// ── Public ──────────────────────────────────────────────────────────────
 	api.POST("/auth/login", authH.Login)
 	api.POST("/auth/register", authH.Register)
+	api.POST("/auth/logout", authH.Logout)
 
 	// ── Authenticated ────────────────────────────────────────────────────────
 	auth := api.Group("/")

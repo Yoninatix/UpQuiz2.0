@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ccsthesis/examplatform/internal/config"
@@ -40,9 +41,16 @@ func (h *DocumentHandler) Upload(c *gin.Context) {
 	}
 	defer file.Close()
 
-	allowedExts := map[string]bool{".pdf": true, ".docx": true, ".txt": true, ".md": true}
-	if !allowedExts[filepath.Ext(header.Filename)] {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file type; allowed: PDF, DOCX, TXT, MD"})
+	allowedExts := map[string]bool{
+		".pdf": true, ".docx": true, ".doc": true,
+		".pptx": true, ".xlsx": true, ".xls": true,
+		".txt": true, ".md": true, ".csv": true,
+		".rtf": true, ".html": true, ".htm": true,
+		".odt": true,
+	}
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if !allowedExts[ext] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported file type; allowed: PDF, DOCX, DOC, PPTX, XLSX, XLS, TXT, MD, CSV, RTF, HTML, ODT"})
 		return
 	}
 

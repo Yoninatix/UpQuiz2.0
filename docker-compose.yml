@@ -118,7 +118,7 @@ services:
         echo ""
         echo "Model pull complete."
     environment:
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma:2b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
     depends_on:
       - ollama
     networks:
@@ -163,7 +163,7 @@ services:
       MILVUS_PORT: 19530
       MILVUS_COLLECTION: ${MILVUS_COLLECTION:-document_chunks}
       OLLAMA_HOST: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma:2b}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma3:4b}
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-examdb}

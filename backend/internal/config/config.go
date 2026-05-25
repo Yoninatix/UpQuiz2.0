@@ -15,6 +15,7 @@ type Config struct {
 	JWTExpiryHours int
 	AIServiceURL   string
 	UploadsDir     string
+	CookieSecure   bool
 }
 
 func Load() *Config {
@@ -30,6 +31,7 @@ func Load() *Config {
 		JWTSecret:    mustEnv("JWT_SECRET"),
 		AIServiceURL: getEnv("AI_SERVICE_URL", "http://ai-service:3001"),
 		UploadsDir:   getEnv("UPLOADS_DIR", "/app/uploads"),
+		CookieSecure: getEnv("COOKIE_SECURE", "false") == "true",
 	}
 }
 

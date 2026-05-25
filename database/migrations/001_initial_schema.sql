@@ -182,12 +182,12 @@ CREATE TABLE topic_performance (
 );
 
 -- ─── Seed: default admin account ────────────────────────────
--- Password: Admin@1234  (bcrypt cost 10, generated via pgcrypto)
+-- Password: Upquiz@2026  (bcrypt cost 10, generated via pgcrypto)
 INSERT INTO users (email, password, first_name, last_name, role)
 VALUES (
-    'admin@examplatform.local',
-    crypt('Admin@1234', gen_salt('bf', 10)),
-    'System',
-    'Admin',
+    'ccsthesisresearch26@gmail.com',
+    crypt('Upquiz@2026', gen_salt('bf', 10)),
+    'CCS',
+    'Research',
     'admin'
 );
