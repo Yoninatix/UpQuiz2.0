@@ -124,9 +124,11 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	admin.PATCH("/users/:id/deactivate", adminH.Deactivate)
 
 	// ── Health ───────────────────────────────────────────────────────────────
-	r.GET("/health", func(c *gin.Context) {
+	healthHandler := func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
-	})
+	}
+	r.GET("/health", healthHandler)
+	r.GET("/api/health", healthHandler)
 
 	return r
 }
