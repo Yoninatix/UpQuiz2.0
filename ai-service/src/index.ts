@@ -22,7 +22,7 @@ const server = app.listen(Number(PORT), () => {
   import('axios').then(({ default: axios }) => {
     axios.post(`${ollamaHost}/api/generate`, {
       model, prompt: 'hi', stream: false, keep_alive: '30m',
-      options: { num_predict: 1, num_ctx: 256 },
+      options: { num_predict: 1, num_ctx: 512 },
     }, { timeout: 120000 })
       .then(() => console.log(`Ollama model ${model} warmed up`))
       .catch(e => console.warn('Ollama warm-up failed (will retry on first request):', e.message));

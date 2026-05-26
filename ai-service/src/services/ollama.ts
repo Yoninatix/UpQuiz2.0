@@ -17,14 +17,13 @@ export async function generate(options: GenerateOptions): Promise<string> {
       keep_alive: '30m',
       options: {
         temperature: options.temperature ?? 0.3,
-        num_predict: options.maxTokens ?? 120,
-        num_ctx: 256,
+        num_predict: options.maxTokens ?? 800,
+        num_ctx: 4096,
         num_thread: 16,
-        stop: ['```\n', '\n\n\n'],
       },
     },
     {
-      timeout: 3 * 60 * 1000, // 3-minute timeout — fail fast and skip
+      timeout: 8 * 60 * 1000, // 8-minute timeout
     },
   );
 

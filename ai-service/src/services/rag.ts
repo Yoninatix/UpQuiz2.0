@@ -25,9 +25,6 @@ export interface GeneratedQuestion {
 
 const MIN_CHUNK_SCORE = 0.35;
 
-// Strip copyright / publication boilerplate that textbook PDFs embed on every page.
-// Removes specific phrases rather than whole lines, since normalise() collapses
-// everything to a single line making line-based filtering delete real content too.
 function cleanChunkContent(content: string): string {
   return content
     .replace(/electronics fundamentals\s+\d+\w*\s+edition\s+floyd\/buchla/gi, '')
@@ -49,7 +46,6 @@ export async function generateQuestionsFromRAG(
 ): Promise<GeneratedQuestion[]> {
   const totalQuestions = configs.reduce((sum, c) => sum + c.count, 0);
 
-  // If no topic given, fetch all chunks from the document (whole-document mode)
   const isWholDoc = !topicHint.trim();
   let chunks;
   if (isWholDoc) {
@@ -70,13 +66,11 @@ export async function generateQuestionsFromRAG(
     );
   }
 
-  // Shuffle so cycling doesn't repeatedly hit the same slides
   for (let i = relevantChunks.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
     [relevantChunks[i], relevantChunks[j]] = [relevantChunks[j], relevantChunks[i]];
   }
 
-  // Filter out chunks too short for meaningful questions
   const usableChunks = relevantChunks.filter(c => c.content.trim().length >= 120);
   const pool = usableChunks.length > 0 ? usableChunks : relevantChunks;
 
@@ -91,7 +85,6 @@ export async function generateQuestionsFromRAG(
       for (let attempt = 0; attempt < MAX_RETRIES && !accepted; attempt++) {
         const chunkIdx = (questions.length + attempt) % pool.length;
 
-        // Combine 4 chunks for richer context — single chunks are often too sparse
         const combinedContent = Array.from({ length: 4 }, (_, k) =>
           pool[(chunkIdx + k) % pool.length].content
         ).join('\n\n');
@@ -107,12 +100,11 @@ export async function generateQuestionsFromRAG(
           rawOutput = await generate({ prompt, temperature: 0.4 + attempt * 0.1 });
         } catch (err) {
           console.error(`Ollama error for ${cfg.type}/${cfg.difficulty}, skipping:`, (err as any)?.message ?? err);
-          break; // skip this question, continue with next
+          break;
         }
 
         console.log(`[DEBUG] raw output for ${cfg.type}/${cfg.difficulty}:`, rawOutput.slice(0, 300));
         const parsed = parseQuestions(rawOutput, singleCfg, chunk, topicHint);
-        // Only dedup within the same question type — different types can cover the same fact
         const seenTexts = new Set(
           questions
             .filter(q => q.question_type === cfg.type)
@@ -141,59 +133,65 @@ function buildPrompt(
   topic: string,
   alreadyGenerated: string[],
 ): string {
-  // Limit source text to keep prompt short and generation fast
-  const cleanedContent = cleanChunkContent(chunk.content).slice(0, 150);
+  const cleanedContent = cleanChunkContent(chunk.content).slice(0, 800);
 
-  const difficultyNote: Record<Difficulty, string> = {
-    easy:  `Easy — direct recall of a single stated fact.`,
-    medium: `Medium — requires understanding or connecting two ideas.`,
-    hard:  `Hard — requires analysis or applying a concept to a new situation.`,
+  const typeInstructions: Record<QuestionType, string> = {
+    multiple_choice:
+      `1 multiple choice question, 4 choices (A B C D). correct_answer is one letter: A, B, C, or D.`,
+    true_or_false:
+      `1 true/false item. question_text must be a statement ending in a period (NOT a question mark). correct_answer is "True" or "False".`,
+    fill_in_the_blank:
+      `1 fill-in-the-blank statement (NOT a question). Replace one key term with ___. correct_answer is the missing word or phrase. question_text must end with a period, never a question mark.`,
+    essay:
+      `1 open-ended essay question. correct_answer is a 2-sentence model answer using facts from the source.`,
+    matching:
+      `1 matching question. Pick 4 terms from the source. question_text is "Match each term to its correct definition." choices is null. correct_answer format: term1|def1||term2|def2||term3|def3||term4|def4`,
   };
 
-  // Only include the last 3 already-generated questions to keep prompt short
+  const difficultyNote: Record<Difficulty, string> = {
+    easy:   `Easy — direct recall of a single stated fact.`,
+    medium: `Medium — requires understanding or connecting two ideas.`,
+    hard:   `Hard — requires analysis or applying a concept to a new situation.`,
+  };
+
   const avoidList = alreadyGenerated.slice(-3);
   const avoidSection = avoidList.length > 0
     ? `\nAvoid repeating these questions: ${avoidList.map((q, i) => `${i + 1}. ${q}`).join(' | ')}\n`
     : '';
 
-  // Completion-style prompts: give the model the start of the JSON so it just fills in the blanks
-  const starters: Record<QuestionType, string> = {
-    multiple_choice:  `[{"question_text":"`,
-    true_or_false:    `[{"question_text":"`,
-    fill_in_the_blank:`[{"question_text":"`,
-    essay:            `[{"question_text":"`,
-    matching:         `[{"question_text":"Match each term to its correct definition.","question_type":"matching","difficulty":"${cfg.difficulty}","topic_tag":"`,
+  const examples: Record<QuestionType, string> = {
+    multiple_choice:
+      `[{"question_text":"What is the SI unit of force?","question_type":"multiple_choice","difficulty":"easy","topic_tag":"units","correct_answer":"B","choices":[{"key":"A","text":"Joule"},{"key":"B","text":"Newton"},{"key":"C","text":"Pascal"},{"key":"D","text":"Watt"}]}]`,
+    true_or_false:
+      `[{"question_text":"The newton is the SI unit of force.","question_type":"true_or_false","difficulty":"easy","topic_tag":"units","correct_answer":"True","choices":null}]`,
+    fill_in_the_blank:
+      `[{"question_text":"The SI unit of mass is the ___.","question_type":"fill_in_the_blank","difficulty":"easy","topic_tag":"units","correct_answer":"kilogram","choices":null}]`,
+    essay:
+      `[{"question_text":"Explain the difference between mass and weight.","question_type":"essay","difficulty":"medium","topic_tag":"mechanics","correct_answer":"Mass is the amount of matter in an object measured in kilograms. Weight is the gravitational force on that mass, measured in newtons.","choices":null}]`,
+    matching:
+      `[{"question_text":"Match each term to its correct definition.","question_type":"matching","difficulty":"medium","topic_tag":"units","correct_answer":"meter|unit of length||kilogram|unit of mass||second|unit of time||ampere|unit of current","choices":null}]`,
   };
 
-  const formatHint: Record<QuestionType, string> = {
-    multiple_choice:  `JSON fields: question_text, question_type="multiple_choice", difficulty="${cfg.difficulty}", topic_tag, correct_answer (A/B/C/D), choices=[{key,text}x4]`,
-    true_or_false:    `JSON fields: question_text (statement, ends with period), question_type="true_or_false", difficulty="${cfg.difficulty}", topic_tag, correct_answer ("True"/"False"), choices=null`,
-    fill_in_the_blank:`JSON fields: question_text (has ___, ends with period), question_type="fill_in_the_blank", difficulty="${cfg.difficulty}", topic_tag, correct_answer (missing word), choices=null`,
-    essay:            `JSON fields: question_text, question_type="essay", difficulty="${cfg.difficulty}", topic_tag, correct_answer (2 sentences), choices=null`,
-    matching:         `JSON fields: question_text, question_type="matching", difficulty="${cfg.difficulty}", topic_tag, correct_answer="term1|def1||term2|def2||term3|def3||term4|def4", choices=null`,
-  };
-
-  return `SOURCE: "${cleanedContent}"\n` +
-    `${topic ? `TOPIC: ${topic}\n` : ''}` +
-    `DIFFICULTY: ${difficultyNote[cfg.difficulty]}\n` +
+  return `You are an exam question generator. Use ONLY facts from the source text below. Output only a JSON array.\n` +
+    `\nSOURCE:\n"""\n${cleanedContent}\n"""\n` +
+    `${topic ? `\nTOPIC: ${topic}` : ''}` +
+    `\nDIFFICULTY: ${difficultyNote[cfg.difficulty]}` +
+    `\nTASK: Generate ${typeInstructions[cfg.type]}` +
     `${avoidSection}` +
-    `Complete this JSON array using a fact from SOURCE. ${formatHint[cfg.type]}\n` +
-    starters[cfg.type];
+    `\nRespond with ONLY a JSON array containing exactly 1 object. Example:\n${examples[cfg.type]}` +
+    `\nDo NOT include any text outside the JSON array.`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────
 
 function tryRepairJSON(text: string): any {
-  // Try closing a truncated array or object with increasing amounts of closing brackets
   const closings = [']', '}]', '"}]', '"]}', '"]', '"}]}'];
   for (const suffix of closings) {
     try { return JSON.parse(text + suffix); } catch { /* keep trying */ }
   }
-  // Find the last complete {...} object within a truncated array
   const lastClose = text.lastIndexOf('}');
   if (lastClose > 0) {
     const candidate = text.slice(0, lastClose + 1);
-    // Wrap as array if it looks like an object
     if (candidate.trimStart().startsWith('{')) {
       try { return JSON.parse('[' + candidate + ']'); } catch { /* fall through */ }
     }
@@ -216,7 +214,6 @@ function extractJSON(raw: string): any {
     try { return JSON.parse(objMatch[0]); } catch { /* fall through */ }
   }
 
-  // Last resort: try to repair a truncated JSON response
   const repaired = tryRepairJSON(text);
   if (repaired !== null) return repaired;
 
@@ -233,7 +230,6 @@ function normalizeAnswer(type: QuestionType, raw: string): string {
   return raw;
 }
 
-// Parse matching pairs from "term1|def1||term2|def2||..." into [{left, right}]
 function parseMatchingPairs(raw: string): { left: string; right: string }[] | null {
   if (!raw || !raw.includes('|')) return null;
   const pairs = raw.split('||').map(part => {
@@ -246,33 +242,27 @@ function parseMatchingPairs(raw: string): { left: string; right: string }[] | nu
 
 function normalizeTopicTag(tag: string, type: QuestionType, fallback: string): string {
   if (!tag || tag === type || tag.replace(/_/g, ' ') === type.replace(/_/g, ' ')) return fallback;
-  // Replace underscores with spaces, trim
   return tag.replace(/_/g, ' ').trim();
 }
 
 function isValidQuestion(q: any, type: QuestionType): boolean {
   if (typeof q.question_text !== 'string' || q.question_text.trim().length < 5) return false;
 
-  // Reject if question_text looks like a copyright/publication line
   if (/copyright|all rights reserved|pearson|mcgraw|©|\d{4}\s+\w+\s+education/i.test(q.question_text)) return false;
 
   if (type === 'true_or_false') {
     const lower = String(q.correct_answer ?? '').toLowerCase().trim();
     if (lower !== 'true' && lower !== 'false') return false;
-    // Auto-fix: if model produced a question instead of a statement, strip the "?"
     if (q.question_text.trim().endsWith('?')) {
       q.question_text = q.question_text.trim().slice(0, -1) + '.';
     }
   }
 
-  // Auto-fix fill_in_the_blank: if model produced "What is the ___?" convert to statement form
   if (type === 'fill_in_the_blank' && q.question_text.trim().endsWith('?')) {
     q.question_text = q.question_text.trim().slice(0, -1) + '.';
   }
 
   if (type === 'matching') {
-    // Accept even with no pairs — educator can add them manually in the review page
-    // If choices were provided, validate their shape
     const choices = q.choices;
     if (Array.isArray(choices) && choices.length > 0) {
       if (!choices.every((c: any) => typeof c.left === 'string' && typeof c.right === 'string')) return false;
@@ -303,7 +293,6 @@ function parseQuestions(
     .filter(q => isValidQuestion(q, cfg.type))
     .slice(0, cfg.count)
     .map(q => {
-      // For matching: parse pairs from the simple "term|def||term|def" correct_answer string
       let choices = q.choices ?? null;
       let correctAnswer = normalizeAnswer(cfg.type, String(q.correct_answer ?? ''));
       if (cfg.type === 'matching' && (!choices || (Array.isArray(choices) && choices.length === 0))) {
