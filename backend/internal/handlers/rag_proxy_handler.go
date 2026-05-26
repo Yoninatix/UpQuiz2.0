@@ -25,7 +25,7 @@ func NewRAGProxyHandler(cfg *config.Config) *RAGProxyHandler {
 	return &RAGProxyHandler{
 		aiServiceURL: cfg.AIServiceURL,
 		client: &http.Client{
-			Timeout: 10 * time.Minute, // CPU-only LLM can take several minutes
+			Timeout: 60 * time.Minute, // CPU-only LLM can take a long time
 		},
 	}
 }
@@ -41,7 +41,7 @@ func (h *RAGProxyHandler) Generate(c *gin.Context) {
 
 	url := fmt.Sprintf("%s/api/rag/generate", h.aiServiceURL)
 	// Use a detached context so browser disconnect doesn't cancel the slow LLM call
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {

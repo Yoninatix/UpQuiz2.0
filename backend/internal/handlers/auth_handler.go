@@ -51,14 +51,14 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		return
 	}
 
-	token, err := auth.GenerateToken(user.ID, string(user.Role), h.cfg.JWTSecret, 24)
+	token, err := auth.GenerateToken(user.ID, string(user.Role), h.cfg.JWTSecret, 7*24)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not generate token"})
 		return
 	}
 
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("auth_token", token, 24*3600, "/", "", h.cfg.CookieSecure, true)
+	c.SetCookie("auth_token", token, 7*24*3600, "/", "", h.cfg.CookieSecure, true)
 
 	c.JSON(http.StatusOK, gin.H{
 		"user": gin.H{

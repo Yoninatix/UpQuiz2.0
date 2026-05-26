@@ -40,7 +40,7 @@ export default function GenerateQuestionsPage() {
   const [error, setError] = useState('');
 
   const generateMutation = useMutation({
-    mutationFn: () => api.post('/rag/generate', { subject_id: subjectId, topic_hint: topicHint, configs }, { timeout: 300_000 }),
+    mutationFn: () => api.post('/rag/generate', { subject_id: subjectId, topic_hint: topicHint, configs }, { timeout: 0 }),
     onSuccess: (res) => { setResult(res.data.questions); setError(''); },
     onError: (err: any) => setError(err.response?.data?.error ?? 'Generation failed'),
   });
@@ -81,14 +81,18 @@ export default function GenerateQuestionsPage() {
         <div className="lg:col-span-1 space-y-4">
           <div className="card space-y-4">
             <div>
-              <label className="label">Topic / Focus Area</label>
+              <label className="label">Topic / Focus Area <span className="text-slate-400 font-normal">(optional)</span></label>
               <input
                 className="input"
-                placeholder="e.g. Photosynthesis and light reactions"
+                placeholder="Leave blank to draw from the whole document"
                 value={topicHint}
                 onChange={e => setTopicHint(e.target.value)}
               />
-              <p className="text-xs text-slate-400 mt-1.5">Guides which document sections are retrieved via RAG.</p>
+              <p className="text-xs text-slate-400 mt-1.5">
+                {topicHint.trim()
+                  ? 'Questions will focus on this topic.'
+                  : 'No topic set — questions will be drawn from across the entire document.'}
+              </p>
             </div>
 
             <div>
@@ -141,7 +145,7 @@ export default function GenerateQuestionsPage() {
 
             <button
               onClick={() => generateMutation.mutate()}
-              disabled={generateMutation.isPending || !topicHint.trim()}
+              disabled={generateMutation.isPending}
               className="btn-primary w-full justify-center"
             >
               {generateMutation.isPending

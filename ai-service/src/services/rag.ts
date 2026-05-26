@@ -1,5 +1,5 @@
 import { embedText } from './embeddings';
-import { searchSimilarChunks, SearchResult } from './milvus';
+import { searchSimilarChunks, fetchAllChunksForSubject, SearchResult } from './milvus';
 import { generate } from './ollama';
 
 export type QuestionType = 'multiple_choice' | 'true_or_false' | 'fill_in_the_blank' | 'essay' | 'matching';
@@ -23,28 +23,43 @@ export interface GeneratedQuestion {
   source_content: string;
 }
 
-const MIN_CHUNK_SCORE = 0.35; // cosine similarity threshold
+const MIN_CHUNK_SCORE = 0.35;
 
-/**
- * Full RAG pipeline:
- * 1. Embed the subject/topic query
- * 2. Retrieve relevant chunks from Milvus
- * 3. Build a source-grounded prompt
- * 4. Call Ollama/Gemma
- * 5. Parse and return structured questions
- */
+// Strip copyright / publication headers that PDFs often embed at the top of every page
+function cleanChunkContent(content: string): string {
+  return content
+    .split('\n')
+    .filter(line => {
+      const l = line.trim();
+      if (!l) return false;
+      // Drop lines that look like copyright / publication metadata
+      if (/copyright|all rights reserved|pearson|mcgraw|cengage|wiley|edition|chapter \d|©|\d{4}\s+\w+\s+education/i.test(l)) return false;
+      return true;
+    })
+    .join('\n')
+    .trim();
+}
+
 export async function generateQuestionsFromRAG(
   subjectId: string,
   topicHint: string,
   configs: QuestionConfig[],
 ): Promise<GeneratedQuestion[]> {
-  // 1. Embed the topic hint to find relevant chunks
-  const queryEmbedding = await embedText(topicHint);
-
   const totalQuestions = configs.reduce((sum, c) => sum + c.count, 0);
-  const chunks = await searchSimilarChunks(queryEmbedding, subjectId, Math.max(totalQuestions * 2, 10));
 
-  const relevantChunks = chunks.filter(c => c.score >= MIN_CHUNK_SCORE);
+  // If no topic given, fetch all chunks from the document (whole-document mode)
+  const isWholDoc = !topicHint.trim();
+  let chunks;
+  if (isWholDoc) {
+    chunks = await fetchAllChunksForSubject(subjectId, Math.max(totalQuestions * 6, 50));
+  } else {
+    const queryEmbedding = await embedText(topicHint);
+    chunks = await searchSimilarChunks(queryEmbedding, subjectId, Math.max(totalQuestions * 6, 50));
+  }
+
+  const relevantChunks = isWholDoc
+    ? chunks.filter(c => c.content.trim().length > 0)
+    : chunks.filter(c => c.score >= MIN_CHUNK_SCORE);
 
   if (relevantChunks.length === 0) {
     throw new Error(
@@ -53,22 +68,59 @@ export async function generateQuestionsFromRAG(
     );
   }
 
+  // Shuffle so cycling doesn't repeatedly hit the same slides
+  for (let i = relevantChunks.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [relevantChunks[i], relevantChunks[j]] = [relevantChunks[j], relevantChunks[i]];
+  }
+
+  // Filter out chunks too short for meaningful questions
+  const usableChunks = relevantChunks.filter(c => c.content.trim().length >= 120);
+  const pool = usableChunks.length > 0 ? usableChunks : relevantChunks;
+
   const questions: GeneratedQuestion[] = [];
+  const MAX_RETRIES = 3;
 
   for (const cfg of configs) {
-    const chunk = relevantChunks[questions.length % relevantChunks.length];
-    const prompt = buildPrompt(cfg, chunk, topicHint);
+    for (let i = 0; i < cfg.count; i++) {
+      const singleCfg = { ...cfg, count: 1 };
+      let accepted = false;
 
-    let rawOutput: string;
-    try {
-      rawOutput = await generate({ prompt, temperature: 0.2 });
-    } catch (err) {
-      console.error('Ollama generation error:', err);
-      throw new Error('LLM generation failed. Is Ollama running with gemma loaded?');
+      for (let attempt = 0; attempt < MAX_RETRIES && !accepted; attempt++) {
+        const chunkIdx = (questions.length + attempt) % pool.length;
+        const chunk = pool[chunkIdx];
+
+        const alreadyGenerated = questions
+          .filter(q => q.question_type === cfg.type)
+          .map(q => `${q.question_text} [answer: ${q.correct_answer}]`);
+        const prompt = buildPrompt(singleCfg, chunk, topicHint, alreadyGenerated);
+
+        let rawOutput: string;
+        try {
+          rawOutput = await generate({ prompt, temperature: 0.4 + attempt * 0.1 });
+        } catch (err) {
+          console.error('Ollama generation error:', err);
+          throw new Error('LLM generation failed. Is Ollama running with gemma loaded?');
+        }
+
+        console.log(`[DEBUG] raw output for ${cfg.type}/${cfg.difficulty}:`, rawOutput.slice(0, 400));
+        const parsed = parseQuestions(rawOutput, singleCfg, chunk, topicHint);
+        // Only dedup within the same question type — different types can cover the same fact
+        const seenTexts = new Set(
+          questions
+            .filter(q => q.question_type === cfg.type)
+            .map(q => q.question_text.trim().toLowerCase())
+        );
+        const newQ = parsed.filter(p => !seenTexts.has(p.question_text.trim().toLowerCase()));
+
+        if (newQ.length > 0) {
+          questions.push(...newQ);
+          accepted = true;
+        } else {
+          console.warn(`Attempt ${attempt + 1} for ${cfg.type}/${cfg.difficulty} yielded no valid unique question — retrying.`);
+        }
+      }
     }
-
-    const parsed = parseQuestions(rawOutput, cfg, chunk);
-    questions.push(...parsed);
   }
 
   return questions;
@@ -76,51 +128,89 @@ export async function generateQuestionsFromRAG(
 
 // ─── Prompt builder ──────────────────────────────────────────────────────────
 
-function buildPrompt(cfg: QuestionConfig, chunk: SearchResult, topic: string): string {
+function buildPrompt(
+  cfg: QuestionConfig,
+  chunk: SearchResult,
+  topic: string,
+  alreadyGenerated: string[],
+): string {
+  // Limit source text to keep prompt short and generation fast
+  const cleanedContent = cleanChunkContent(chunk.content).slice(0, 800);
+
   const typeInstructions: Record<QuestionType, string> = {
-    multiple_choice: `Generate ${cfg.count} multiple choice question(s). Each must have exactly 4 choices labeled A, B, C, D. State the correct letter as the answer.`,
-    true_or_false: `Generate ${cfg.count} true or false question(s). Answer must be exactly "True" or "False".`,
-    fill_in_the_blank: `Generate ${cfg.count} fill-in-the-blank question(s). Use ___ for the blank. Provide the exact word or phrase as the answer.`,
-    essay: `Generate ${cfg.count} essay question(s). Provide a model answer of 2-3 sentences.`,
-    matching: `Generate ${cfg.count} matching type question(s) with 4 pairs. Format as JSON with "left" and "right" keys per pair.`,
+    multiple_choice:
+      `1 multiple choice question, 4 choices (A B C D). correct_answer is one letter: A, B, C, or D.`,
+    true_or_false:
+      `1 true/false item. question_text must be a statement ending in a period (NOT a question mark). correct_answer is "True" or "False".`,
+    fill_in_the_blank:
+      `1 fill-in-the-blank statement (NOT a question). Replace one key term with ___. correct_answer is the missing word or phrase. question_text must end with a period, never a question mark.`,
+    essay:
+      `1 open-ended essay question. correct_answer is a 2-sentence model answer using facts from the source.`,
+    matching:
+      `1 matching question. Pick 4 terms from the source. question_text is "Match each term to its correct definition." choices is null. correct_answer format: term1|def1||term2|def2||term3|def3||term4|def4`,
   };
 
-  return `You are an exam question generator. Use ONLY facts from the source text below.
+  const difficultyNote: Record<Difficulty, string> = {
+    easy:  `Easy — direct recall of a single stated fact.`,
+    medium: `Medium — requires understanding or connecting two ideas.`,
+    hard:  `Hard — requires analysis or applying a concept to a new situation.`,
+  };
 
-SOURCE TEXT:
-"""
-${chunk.content}
-"""
+  // Only include the last 3 already-generated questions to keep prompt short
+  const avoidList = alreadyGenerated.slice(-3);
+  const avoidSection = avoidList.length > 0
+    ? `\nAvoid repeating these questions: ${avoidList.map((q, i) => `${i + 1}. ${q}`).join(' | ')}\n`
+    : '';
 
-TOPIC: ${topic}
-DIFFICULTY: ${cfg.difficulty}
-TASK: ${typeInstructions[cfg.type]}
+  const examples: Record<QuestionType, string> = {
+    multiple_choice:
+      `[{"question_text":"What is the SI unit of force?","question_type":"multiple_choice","difficulty":"easy","topic_tag":"units","correct_answer":"B","choices":[{"key":"A","text":"Joule"},{"key":"B","text":"Newton"},{"key":"C","text":"Pascal"},{"key":"D","text":"Watt"}]}]`,
+    true_or_false:
+      `[{"question_text":"The newton is the SI unit of force.","question_type":"true_or_false","difficulty":"easy","topic_tag":"units","correct_answer":"True","choices":null}]`,
+    fill_in_the_blank:
+      `[{"question_text":"The SI unit of mass is the ___.","question_type":"fill_in_the_blank","difficulty":"easy","topic_tag":"units","correct_answer":"kilogram","choices":null}]`,
+    essay:
+      `[{"question_text":"Explain the difference between mass and weight.","question_type":"essay","difficulty":"medium","topic_tag":"mechanics","correct_answer":"Mass is the amount of matter in an object measured in kilograms. Weight is the gravitational force on that mass, measured in newtons.","choices":null}]`,
+    matching:
+      `[{"question_text":"Match each term to its correct definition.","question_type":"matching","difficulty":"medium","topic_tag":"units","correct_answer":"meter|unit of length||kilogram|unit of mass||second|unit of time||ampere|unit of current","choices":null}]`,
+  };
 
-IMPORTANT: Your entire response must be a single valid JSON array (starting with [ and ending with ]).
-Each element of the array is an object with EXACTLY these keys:
-  "question_text": the question as a string
-  "question_type": "${cfg.type}"
-  "difficulty": "${cfg.difficulty}"
-  "topic_tag": a short label (1-4 words)
-  "correct_answer": the answer as a string
-  "choices": for multiple_choice use [{"key":"A","text":"..."},{"key":"B","text":"..."},{"key":"C","text":"..."},{"key":"D","text":"..."}], for matching use [{"left":"...","right":"..."},...], for all others use null
-
-Example of the required format:
-[{"question_text":"...","question_type":"${cfg.type}","difficulty":"${cfg.difficulty}","topic_tag":"...","correct_answer":"...","choices":null}]
-
-Do NOT include any text outside the JSON array. No markdown, no code fences, no explanations.`;
+  return `You are an exam question generator. Use ONLY facts from the source text below. Output only a JSON array.\n` +
+    `\nSOURCE:\n"""\n${cleanedContent}\n"""\n` +
+    `${topic ? `\nTOPIC: ${topic}` : ''}` +
+    `\nDIFFICULTY: ${difficultyNote[cfg.difficulty]}` +
+    `\nTASK: Generate ${typeInstructions[cfg.type]}` +
+    `${avoidSection}` +
+    `\nRespond with ONLY a JSON array containing exactly 1 object. Example:\n${examples[cfg.type]}` +
+    `\nDo NOT include any text outside the JSON array.`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────
 
+function tryRepairJSON(text: string): any {
+  // Try closing a truncated array or object with increasing amounts of closing brackets
+  const closings = [']', '}]', '"}]', '"]}', '"]', '"}]}'];
+  for (const suffix of closings) {
+    try { return JSON.parse(text + suffix); } catch { /* keep trying */ }
+  }
+  // Find the last complete {...} object within a truncated array
+  const lastClose = text.lastIndexOf('}');
+  if (lastClose > 0) {
+    const candidate = text.slice(0, lastClose + 1);
+    // Wrap as array if it looks like an object
+    if (candidate.trimStart().startsWith('{')) {
+      try { return JSON.parse('[' + candidate + ']'); } catch { /* fall through */ }
+    }
+    try { return JSON.parse(candidate); } catch { /* fall through */ }
+  }
+  return null;
+}
+
 function extractJSON(raw: string): any {
-  // Strip markdown fences
   let text = raw.replace(/```json|```/g, '').trim();
 
-  // Try direct parse first
   try { return JSON.parse(text); } catch { /* fall through */ }
 
-  // Find the outermost [...] or {...} block and try again
   const arrayMatch = text.match(/\[[\s\S]*\]/);
   if (arrayMatch) {
     try { return JSON.parse(arrayMatch[0]); } catch { /* fall through */ }
@@ -130,35 +220,113 @@ function extractJSON(raw: string): any {
     try { return JSON.parse(objMatch[0]); } catch { /* fall through */ }
   }
 
+  // Last resort: try to repair a truncated JSON response
+  const repaired = tryRepairJSON(text);
+  if (repaired !== null) return repaired;
+
   console.warn('No parseable JSON in LLM response:', text.slice(0, 300));
   return null;
+}
+
+function normalizeAnswer(type: QuestionType, raw: string): string {
+  if (type === 'true_or_false') {
+    const lower = raw.toLowerCase().trim();
+    if (lower === 'true')  return 'True';
+    if (lower === 'false') return 'False';
+  }
+  return raw;
+}
+
+// Parse matching pairs from "term1|def1||term2|def2||..." into [{left, right}]
+function parseMatchingPairs(raw: string): { left: string; right: string }[] | null {
+  if (!raw || !raw.includes('|')) return null;
+  const pairs = raw.split('||').map(part => {
+    const idx = part.indexOf('|');
+    if (idx === -1) return null;
+    return { left: part.slice(0, idx).trim(), right: part.slice(idx + 1).trim() };
+  }).filter((p): p is { left: string; right: string } => !!p && !!p.left && !!p.right);
+  return pairs.length >= 2 ? pairs : null;
+}
+
+function normalizeTopicTag(tag: string, type: QuestionType, fallback: string): string {
+  if (!tag || tag === type || tag.replace(/_/g, ' ') === type.replace(/_/g, ' ')) return fallback;
+  // Replace underscores with spaces, trim
+  return tag.replace(/_/g, ' ').trim();
+}
+
+function isValidQuestion(q: any, type: QuestionType): boolean {
+  if (typeof q.question_text !== 'string' || q.question_text.trim().length < 5) return false;
+
+  // Reject if question_text looks like a copyright/publication line
+  if (/copyright|all rights reserved|pearson|mcgraw|©|\d{4}\s+\w+\s+education/i.test(q.question_text)) return false;
+
+  if (type === 'true_or_false') {
+    const lower = String(q.correct_answer ?? '').toLowerCase().trim();
+    if (lower !== 'true' && lower !== 'false') return false;
+    // Auto-fix: if model produced a question instead of a statement, strip the "?"
+    if (q.question_text.trim().endsWith('?')) {
+      q.question_text = q.question_text.trim().slice(0, -1) + '.';
+    }
+  }
+
+  // Auto-fix fill_in_the_blank: if model produced "What is the ___?" convert to statement form
+  if (type === 'fill_in_the_blank' && q.question_text.trim().endsWith('?')) {
+    q.question_text = q.question_text.trim().slice(0, -1) + '.';
+  }
+
+  if (type === 'matching') {
+    // Accept even with no pairs — educator can add them manually in the review page
+    // If choices were provided, validate their shape
+    const choices = q.choices;
+    if (Array.isArray(choices) && choices.length > 0) {
+      if (!choices.every((c: any) => typeof c.left === 'string' && typeof c.right === 'string')) return false;
+    }
+  }
+
+  if (type !== 'true_or_false' && type !== 'matching') {
+    if (String(q.correct_answer ?? '').trim().length === 0) return false;
+  }
+
+  return true;
 }
 
 function parseQuestions(
   raw: string,
   cfg: QuestionConfig,
   chunk: SearchResult,
+  topicFallback: string,
 ): GeneratedQuestion[] {
   const parsed = extractJSON(raw);
   if (parsed === null) return [];
 
-  // Gemma sometimes returns a single object instead of an array — normalise it
   const items: any[] = Array.isArray(parsed)
     ? parsed
     : (parsed.question_text ? [parsed] : []);
 
   return items
-    .filter(q => typeof q.question_text === 'string' && q.question_text.trim().length > 0)
+    .filter(q => isValidQuestion(q, cfg.type))
     .slice(0, cfg.count)
-    .map(q => ({
-      question_text: q.question_text,
-      question_type: cfg.type,
-      difficulty: cfg.difficulty,
-      topic_tag: q.topic_tag ?? cfg.type,
-      correct_answer: String(q.correct_answer ?? ''),
-      choices: q.choices ?? null,
-      document_id: chunk.document_id,
-      source_chunk_uuid: chunk.chunk_uuid,
-      source_content: chunk.content,
-    }));
+    .map(q => {
+      // For matching: parse pairs from the simple "term|def||term|def" correct_answer string
+      let choices = q.choices ?? null;
+      let correctAnswer = normalizeAnswer(cfg.type, String(q.correct_answer ?? ''));
+      if (cfg.type === 'matching' && (!choices || (Array.isArray(choices) && choices.length === 0))) {
+        const parsedPairs = parseMatchingPairs(correctAnswer);
+        if (parsedPairs) {
+          choices = parsedPairs;
+          correctAnswer = 'Match each term to its correct definition.';
+        }
+      }
+      return {
+        question_text:     q.question_text.trim(),
+        question_type:     cfg.type,
+        difficulty:        cfg.difficulty,
+        topic_tag:         normalizeTopicTag(q.topic_tag, cfg.type, topicFallback),
+        correct_answer:    correctAnswer,
+        choices,
+        document_id:       chunk.document_id,
+        source_chunk_uuid: chunk.chunk_uuid,
+        source_content:    chunk.content,
+      };
+    });
 }

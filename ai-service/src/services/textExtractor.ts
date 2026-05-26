@@ -1,9 +1,17 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import pdfParse from 'pdf-parse';
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
+
+const execFileAsync = promisify(execFile);
+
+// Pages with fewer characters than this are treated as image-based (e.g. screenshot slides)
+const MIN_TEXT_CHARS_PER_PAGE = 50;
 
 export interface ExtractResult {
   text: string;
@@ -40,14 +48,72 @@ function normalise(text: string): string {
 
 // ── Extractors ────────────────────────────────────────────────────────────────
 
-async function extractPdf(filePath: string): Promise<ExtractResult> {
+// Run Tesseract OCR on a single PDF page rendered to PNG via pdftoppm.
+// Returns '' (silently) if either tool is not installed.
+async function ocrPdfPage(pdfPath: string, pageNum: number): Promise<string> {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'upquiz-ocr-'));
   try {
-    const data = await pdfParse(fs.readFileSync(filePath));
-    return { text: normalise(data.text), pageCount: data.numpages };
+    const imgPrefix = path.join(tmpDir, 'p');
+    await execFileAsync('pdftoppm', [
+      '-r', '200', '-png',
+      '-f', String(pageNum), '-l', String(pageNum),
+      pdfPath, imgPrefix,
+    ]);
+
+    const pngFiles = fs.readdirSync(tmpDir).filter(f => f.endsWith('.png'));
+    if (pngFiles.length === 0) return '';
+
+    const imgPath = path.join(tmpDir, pngFiles[0]);
+    const outBase = path.join(tmpDir, 'ocr');
+    await execFileAsync('tesseract', [imgPath, outBase, '-l', 'eng', '--psm', '6']);
+
+    return fs.readFileSync(`${outBase}.txt`, 'utf-8');
+  } catch {
+    return '';
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+}
+
+async function extractPdf(filePath: string): Promise<ExtractResult> {
+  const buf = fs.readFileSync(filePath);
+
+  // Collect per-page text while running pdf-parse
+  const pageTexts: string[] = [];
+  const pdfOptions = {
+    pagerender: (pageData: any) =>
+      pageData.getTextContent({ normalizeWhitespace: false }).then((tc: any) => {
+        const text = (tc.items as any[]).map((it: any) => it.str).join(' ');
+        pageTexts.push(text);
+        return text;
+      }),
+  };
+
+  let numPages = 1;
+  try {
+    const data = await (pdfParse as any)(buf, pdfOptions);
+    numPages = data.numpages;
   } catch (err) {
     console.error('PDF extraction error:', err);
     return { text: '', pageCount: 0 };
   }
+
+  // For pages that have very little extracted text, try OCR
+  const sparseIndices = pageTexts
+    .map((t, i) => ({ pageNum: i + 1, len: t.trim().length }))
+    .filter(({ len }) => len < MIN_TEXT_CHARS_PER_PAGE);
+
+  if (sparseIndices.length > 0) {
+    console.log(`[OCR] ${sparseIndices.length} sparse page(s) in "${path.basename(filePath)}", running OCR…`);
+    for (const { pageNum } of sparseIndices) {
+      const ocrText = await ocrPdfPage(filePath, pageNum);
+      if (ocrText.trim().length > (pageTexts[pageNum - 1]?.trim().length ?? 0)) {
+        pageTexts[pageNum - 1] = ocrText;
+      }
+    }
+  }
+
+  return { text: normalise(pageTexts.join('\n\n')), pageCount: numPages };
 }
 
 async function extractDocx(filePath: string): Promise<ExtractResult> {

@@ -17,9 +17,13 @@ RUN npm install --omit=dev
 FROM debian:trixie-slim
 
 # libstdc++6 is required by the Node.js binary from bookworm
+# tesseract-ocr + poppler-utils enable OCR on image-based PDF pages
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libstdc++6 ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends \
+      libstdc++6 ca-certificates \
+      tesseract-ocr \
+      poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 # Borrow the Node.js binary from the build stage (glibc-compatible with Trixie)
 COPY --from=builder /usr/local/bin/node /usr/local/bin/node

@@ -136,9 +136,6 @@ export default function LoginPage() {
             </Link>
           </p>
 
-          <p className="text-xs text-center mt-8 text-slate-400 border-t border-slate-100 pt-6">
-            Default admin: admin@examplatform.local · Admin@1234
-          </p>
         </div>
       </div>
     </div>

@@ -6,7 +6,7 @@ export const ragRouter = Router();
 
 const GenerateSchema = z.object({
   subject_id: z.string().uuid(),
-  topic_hint: z.string().min(3).max(500),
+  topic_hint: z.string().max(500).default(''),
   configs: z.array(
     z.object({
       type: z.enum(['multiple_choice', 'true_or_false', 'fill_in_the_blank', 'essay', 'matching']),
@@ -38,7 +38,7 @@ ragRouter.post('/generate', async (req: Request, res: Response) => {
 
     if (questions.length === 0) {
       return res.status(422).json({
-        error: 'The LLM returned no valid questions. The source content may be insufficient or unclear.',
+        error: 'The LLM returned no valid questions. Try a different topic, question type, or upload more learning materials.',
       });
     }
 

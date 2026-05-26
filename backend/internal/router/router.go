@@ -46,7 +46,7 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	analyticsRepo := repository.NewAnalyticsRepo(db)
 
 	// ── Services ────────────────────────────────────────────────────────────
-	scorer := services.NewScoringService(attemptRepo, examRepo, questionRepo)
+	scorer := services.NewScoringService(attemptRepo, examRepo, questionRepo, cfg.AIServiceURL)
 
 	// ── Handlers ────────────────────────────────────────────────────────────
 	authH := handlers.NewAuthHandler(userRepo, cfg)

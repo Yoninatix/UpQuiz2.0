@@ -1,7 +1,11 @@
 package services
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -14,17 +18,20 @@ type ScoringService struct {
 	attemptRepo  repository.AttemptRepository
 	examRepo     repository.ExamRepository
 	questionRepo repository.QuestionRepository
+	aiServiceURL string
 }
 
 func NewScoringService(
 	attemptRepo repository.AttemptRepository,
 	examRepo repository.ExamRepository,
 	questionRepo repository.QuestionRepository,
+	aiServiceURL string,
 ) *ScoringService {
 	return &ScoringService{
 		attemptRepo:  attemptRepo,
 		examRepo:     examRepo,
 		questionRepo: questionRepo,
+		aiServiceURL: aiServiceURL,
 	}
 }
 
@@ -36,7 +43,53 @@ type ScoreResult struct {
 	SubmittedAt time.Time `json:"submitted_at"`
 }
 
-// ScoreAttempt auto-scores objective questions; skips essay.
+type essayScoreRequest struct {
+	ModelAnswer   string `json:"model_answer"`
+	StudentAnswer string `json:"student_answer"`
+}
+
+type essayScoreResponse struct {
+	Score      float64 `json:"score"`      // 0-100
+	Similarity float64 `json:"similarity"` // 0-1
+}
+
+// scoreEssay calls the AI service to get an embedding-similarity score (0-100).
+func (s *ScoringService) scoreEssay(ctx context.Context, modelAnswer, studentAnswer string) (float64, error) {
+	if strings.TrimSpace(studentAnswer) == "" {
+		return 0, nil
+	}
+
+	body, _ := json.Marshal(essayScoreRequest{
+		ModelAnswer:   modelAnswer,
+		StudentAnswer: studentAnswer,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		s.aiServiceURL+"/api/essay/score", bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("AI service unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("AI service returned %d", resp.StatusCode)
+	}
+
+	var result essayScoreResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, err
+	}
+	return result.Score, nil
+}
+
+// ScoreAttempt auto-scores objective questions and uses embedding similarity for essays.
 func (s *ScoringService) ScoreAttempt(ctx context.Context, attemptID, studentID uuid.UUID) (*ScoreResult, error) {
 	answers, err := s.attemptRepo.GetAnswers(ctx, attemptID)
 	if err != nil {
@@ -55,17 +108,23 @@ func (s *ScoringService) ScoreAttempt(ctx context.Context, attemptID, studentID 
 		max += pointsPerQ
 
 		if q.QuestionType == models.QTypeEssay {
-			// Essay: skip auto-scoring; educator marks manually
+			essayScore, err := s.scoreEssay(ctx, q.CorrectAnswer, ans.AnswerText)
+			if err != nil {
+				// AI service unavailable — exclude this essay from the scored total
+				// so it doesn't penalise the student; educator can review manually.
+				fmt.Printf("Essay scoring unavailable for question %s: %v — pending educator review\n", q.ID, err)
+				max -= pointsPerQ
+				continue
+			}
+			// essayScore is 0-100; convert to fraction of pointsPerQ
+			pts := (essayScore / 100.0) * pointsPerQ
+			total += pts
 			continue
 		}
 
-		isCorrect := s.checkAnswer(q, ans.AnswerText)
-		pts := 0.0
-		if isCorrect {
-			pts = pointsPerQ
-			total += pts
+		if s.checkAnswer(q, ans.AnswerText) {
+			total += pointsPerQ
 		}
-		_ = pts // stored via UpsertAnswer later
 	}
 
 	pct := 0.0
@@ -96,7 +155,6 @@ func (s *ScoringService) checkAnswer(q *models.GeneratedQuestion, studentAnswer 
 	case models.QTypeFillBlank:
 		return correct == given
 	case models.QTypeMatching:
-		// Matching answers submitted as JSON string; exact-match for now
 		return correct == given
 	default:
 		return false

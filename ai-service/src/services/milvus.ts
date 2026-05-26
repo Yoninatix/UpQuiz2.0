@@ -70,6 +70,31 @@ export interface SearchResult {
   score: number;
 }
 
+// Fetch all chunks for a subject without a query vector (whole-document mode)
+export async function fetchAllChunksForSubject(
+  subjectId: string,
+  limit = 200,
+): Promise<SearchResult[]> {
+  const c = await getMilvusClient();
+  try {
+    const results = await c.query({
+      collection_name: COLLECTION_NAME,
+      filter: `subject_id == "${subjectId}"`,
+      output_fields: ['chunk_uuid', 'document_id', 'content'],
+      limit,
+    });
+    return (results.data ?? []).map((r: any) => ({
+      chunk_uuid: r.chunk_uuid,
+      document_id: r.document_id,
+      content: r.content,
+      score: 1.0, // no similarity score in whole-doc mode
+    }));
+  } catch (err: any) {
+    console.warn('Milvus query warning:', err?.message ?? err);
+    return [];
+  }
+}
+
 export async function searchSimilarChunks(
   queryEmbedding: number[],
   subjectId: string,
