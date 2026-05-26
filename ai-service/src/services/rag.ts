@@ -106,8 +106,8 @@ export async function generateQuestionsFromRAG(
         try {
           rawOutput = await generate({ prompt, temperature: 0.4 + attempt * 0.1 });
         } catch (err) {
-          console.error('Ollama generation error:', err);
-          throw new Error('LLM generation failed. Is Ollama running with gemma loaded?');
+          console.error(`Ollama error for ${cfg.type}/${cfg.difficulty}, skipping:`, (err as any)?.message ?? err);
+          break; // skip this question, continue with next
         }
 
         console.log(`[DEBUG] raw output for ${cfg.type}/${cfg.difficulty}:`, rawOutput.slice(0, 300));
@@ -142,7 +142,7 @@ function buildPrompt(
   alreadyGenerated: string[],
 ): string {
   // Limit source text to keep prompt short and generation fast
-  const cleanedContent = cleanChunkContent(chunk.content).slice(0, 800);
+  const cleanedContent = cleanChunkContent(chunk.content).slice(0, 150);
 
   const typeInstructions: Record<QuestionType, string> = {
     multiple_choice:
@@ -170,26 +170,20 @@ function buildPrompt(
     : '';
 
   const examples: Record<QuestionType, string> = {
-    multiple_choice:
-      `[{"question_text":"What is the SI unit of force?","question_type":"multiple_choice","difficulty":"easy","topic_tag":"units","correct_answer":"B","choices":[{"key":"A","text":"Joule"},{"key":"B","text":"Newton"},{"key":"C","text":"Pascal"},{"key":"D","text":"Watt"}]}]`,
-    true_or_false:
-      `[{"question_text":"The newton is the SI unit of force.","question_type":"true_or_false","difficulty":"easy","topic_tag":"units","correct_answer":"True","choices":null}]`,
-    fill_in_the_blank:
-      `[{"question_text":"The SI unit of mass is the ___.","question_type":"fill_in_the_blank","difficulty":"easy","topic_tag":"units","correct_answer":"kilogram","choices":null}]`,
-    essay:
-      `[{"question_text":"Explain the difference between mass and weight.","question_type":"essay","difficulty":"medium","topic_tag":"mechanics","correct_answer":"Mass is the amount of matter in an object measured in kilograms. Weight is the gravitational force on that mass, measured in newtons.","choices":null}]`,
-    matching:
-      `[{"question_text":"Match each term to its correct definition.","question_type":"matching","difficulty":"medium","topic_tag":"units","correct_answer":"meter|unit of length||kilogram|unit of mass||second|unit of time||ampere|unit of current","choices":null}]`,
+    multiple_choice:  `[{"question_text":"Q?","question_type":"multiple_choice","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"A","choices":[{"key":"A","text":"ans"},{"key":"B","text":"b"},{"key":"C","text":"c"},{"key":"D","text":"d"}]}]`,
+    true_or_false:    `[{"question_text":"Statement.","question_type":"true_or_false","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"True","choices":null}]`,
+    fill_in_the_blank:`[{"question_text":"The ___ is important.","question_type":"fill_in_the_blank","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"term","choices":null}]`,
+    essay:            `[{"question_text":"Explain X.","question_type":"essay","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"X is... X also...","choices":null}]`,
+    matching:         `[{"question_text":"Match each term to its correct definition.","question_type":"matching","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"term1|def1||term2|def2||term3|def3||term4|def4","choices":null}]`,
   };
 
-  return `You are an exam question generator. Use ONLY facts from the source text below. Output only a JSON array.\n` +
-    `\nSOURCE:\n"""\n${cleanedContent}\n"""\n` +
-    `${topic ? `\nTOPIC: ${topic}` : ''}` +
-    `\nDIFFICULTY: ${difficultyNote[cfg.difficulty]}` +
-    `\nTASK: Generate ${typeInstructions[cfg.type]}` +
+  return `Generate 1 exam question as a JSON array. Use ONLY facts from SOURCE.\n` +
+    `SOURCE: "${cleanedContent}"\n` +
+    `${topic ? `TOPIC: ${topic}\n` : ''}` +
+    `TYPE: ${typeInstructions[cfg.type]}\n` +
+    `DIFFICULTY: ${difficultyNote[cfg.difficulty]}\n` +
     `${avoidSection}` +
-    `\nRespond with ONLY a JSON array containing exactly 1 object. Example:\n${examples[cfg.type]}` +
-    `\nDo NOT include any text outside the JSON array.`;
+    `Output ONLY this JSON (no other text): ${examples[cfg.type]}`;
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────

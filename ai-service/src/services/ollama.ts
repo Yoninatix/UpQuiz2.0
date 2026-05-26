@@ -14,16 +14,17 @@ export async function generate(options: GenerateOptions): Promise<string> {
       model: config.ollama.model,
       prompt: options.prompt,
       stream: false,
-      keep_alive: '30m',
+      keep_alive: '5m',
       options: {
         temperature: options.temperature ?? 0.3,
-        num_predict: options.maxTokens ?? 800,
-        num_ctx: 4096,
+        num_predict: options.maxTokens ?? 120,
+        num_ctx: 256,
         num_thread: 16,
+        stop: ['```\n', '\n\n\n'],
       },
     },
     {
-      timeout: 5 * 60 * 1000, // 5-minute hard timeout per request
+      timeout: 3 * 60 * 1000, // 3-minute timeout — fail fast and skip
     },
   );
 
