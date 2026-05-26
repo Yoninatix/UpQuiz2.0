@@ -25,18 +25,20 @@ export interface GeneratedQuestion {
 
 const MIN_CHUNK_SCORE = 0.35;
 
-// Strip copyright / publication headers that PDFs often embed at the top of every page
+// Strip copyright / publication boilerplate that textbook PDFs embed on every page.
+// Removes specific phrases rather than whole lines, since normalise() collapses
+// everything to a single line making line-based filtering delete real content too.
 function cleanChunkContent(content: string): string {
   return content
-    .split('\n')
-    .filter(line => {
-      const l = line.trim();
-      if (!l) return false;
-      // Drop lines that look like copyright / publication metadata
-      if (/copyright|all rights reserved|pearson|mcgraw|cengage|wiley|edition|chapter \d|©|\d{4}\s+\w+\s+education/i.test(l)) return false;
-      return true;
-    })
-    .join('\n')
+    .replace(/electronics fundamentals\s+\d+\w*\s+edition\s+floyd\/buchla/gi, '')
+    .replace(/©\s*\d{4}\s+[^.]{0,80}reserved\./gi, '')
+    .replace(/all rights reserved\.?/gi, '')
+    .replace(/upper saddle river[^.]*\./gi, '')
+    .replace(/mcgraw[-\s]?hill[^.]*\./gi, '')
+    .replace(/cengage learning[^.]*\./gi, '')
+    .replace(/pearson education[^.]*\./gi, '')
+    .replace(/chapter\s+\d+\s*/gi, '')
+    .replace(/\s{2,}/g, ' ')
     .trim();
 }
 
@@ -88,7 +90,12 @@ export async function generateQuestionsFromRAG(
 
       for (let attempt = 0; attempt < MAX_RETRIES && !accepted; attempt++) {
         const chunkIdx = (questions.length + attempt) % pool.length;
-        const chunk = pool[chunkIdx];
+
+        // Combine 4 chunks for richer context — single chunks are often too sparse
+        const combinedContent = Array.from({ length: 4 }, (_, k) =>
+          pool[(chunkIdx + k) % pool.length].content
+        ).join('\n\n');
+        const chunk = { ...pool[chunkIdx], content: combinedContent };
 
         const alreadyGenerated = questions
           .filter(q => q.question_type === cfg.type)
@@ -103,7 +110,7 @@ export async function generateQuestionsFromRAG(
           throw new Error('LLM generation failed. Is Ollama running with gemma loaded?');
         }
 
-        console.log(`[DEBUG] raw output for ${cfg.type}/${cfg.difficulty}:`, rawOutput.slice(0, 400));
+        console.log(`[DEBUG] raw output for ${cfg.type}/${cfg.difficulty}:`, rawOutput.slice(0, 300));
         const parsed = parseQuestions(rawOutput, singleCfg, chunk, topicHint);
         // Only dedup within the same question type — different types can cover the same fact
         const seenTexts = new Set(
