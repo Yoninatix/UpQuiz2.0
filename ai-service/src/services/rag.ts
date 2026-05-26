@@ -144,19 +144,6 @@ function buildPrompt(
   // Limit source text to keep prompt short and generation fast
   const cleanedContent = cleanChunkContent(chunk.content).slice(0, 150);
 
-  const typeInstructions: Record<QuestionType, string> = {
-    multiple_choice:
-      `1 multiple choice question, 4 choices (A B C D). correct_answer is one letter: A, B, C, or D.`,
-    true_or_false:
-      `1 true/false item. question_text must be a statement ending in a period (NOT a question mark). correct_answer is "True" or "False".`,
-    fill_in_the_blank:
-      `1 fill-in-the-blank statement (NOT a question). Replace one key term with ___. correct_answer is the missing word or phrase. question_text must end with a period, never a question mark.`,
-    essay:
-      `1 open-ended essay question. correct_answer is a 2-sentence model answer using facts from the source.`,
-    matching:
-      `1 matching question. Pick 4 terms from the source. question_text is "Match each term to its correct definition." choices is null. correct_answer format: term1|def1||term2|def2||term3|def3||term4|def4`,
-  };
-
   const difficultyNote: Record<Difficulty, string> = {
     easy:  `Easy — direct recall of a single stated fact.`,
     medium: `Medium — requires understanding or connecting two ideas.`,
@@ -169,21 +156,29 @@ function buildPrompt(
     ? `\nAvoid repeating these questions: ${avoidList.map((q, i) => `${i + 1}. ${q}`).join(' | ')}\n`
     : '';
 
-  const examples: Record<QuestionType, string> = {
-    multiple_choice:  `[{"question_text":"Q?","question_type":"multiple_choice","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"A","choices":[{"key":"A","text":"ans"},{"key":"B","text":"b"},{"key":"C","text":"c"},{"key":"D","text":"d"}]}]`,
-    true_or_false:    `[{"question_text":"Statement.","question_type":"true_or_false","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"True","choices":null}]`,
-    fill_in_the_blank:`[{"question_text":"The ___ is important.","question_type":"fill_in_the_blank","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"term","choices":null}]`,
-    essay:            `[{"question_text":"Explain X.","question_type":"essay","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"X is... X also...","choices":null}]`,
-    matching:         `[{"question_text":"Match each term to its correct definition.","question_type":"matching","difficulty":"${cfg.difficulty}","topic_tag":"topic","correct_answer":"term1|def1||term2|def2||term3|def3||term4|def4","choices":null}]`,
+  // Completion-style prompts: give the model the start of the JSON so it just fills in the blanks
+  const starters: Record<QuestionType, string> = {
+    multiple_choice:  `[{"question_text":"`,
+    true_or_false:    `[{"question_text":"`,
+    fill_in_the_blank:`[{"question_text":"`,
+    essay:            `[{"question_text":"`,
+    matching:         `[{"question_text":"Match each term to its correct definition.","question_type":"matching","difficulty":"${cfg.difficulty}","topic_tag":"`,
   };
 
-  return `Generate 1 exam question as a JSON array. Use ONLY facts from SOURCE.\n` +
-    `SOURCE: "${cleanedContent}"\n` +
+  const formatHint: Record<QuestionType, string> = {
+    multiple_choice:  `JSON fields: question_text, question_type="multiple_choice", difficulty="${cfg.difficulty}", topic_tag, correct_answer (A/B/C/D), choices=[{key,text}x4]`,
+    true_or_false:    `JSON fields: question_text (statement, ends with period), question_type="true_or_false", difficulty="${cfg.difficulty}", topic_tag, correct_answer ("True"/"False"), choices=null`,
+    fill_in_the_blank:`JSON fields: question_text (has ___, ends with period), question_type="fill_in_the_blank", difficulty="${cfg.difficulty}", topic_tag, correct_answer (missing word), choices=null`,
+    essay:            `JSON fields: question_text, question_type="essay", difficulty="${cfg.difficulty}", topic_tag, correct_answer (2 sentences), choices=null`,
+    matching:         `JSON fields: question_text, question_type="matching", difficulty="${cfg.difficulty}", topic_tag, correct_answer="term1|def1||term2|def2||term3|def3||term4|def4", choices=null`,
+  };
+
+  return `SOURCE: "${cleanedContent}"\n` +
     `${topic ? `TOPIC: ${topic}\n` : ''}` +
-    `TYPE: ${typeInstructions[cfg.type]}\n` +
     `DIFFICULTY: ${difficultyNote[cfg.difficulty]}\n` +
     `${avoidSection}` +
-    `Output ONLY this JSON (no other text): ${examples[cfg.type]}`;
+    `Complete this JSON array using a fact from SOURCE. ${formatHint[cfg.type]}\n` +
+    starters[cfg.type];
 }
 
 // ─── Response parser ──────────────────────────────────────────────────────────

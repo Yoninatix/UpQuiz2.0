@@ -14,7 +14,7 @@ export async function generate(options: GenerateOptions): Promise<string> {
       model: config.ollama.model,
       prompt: options.prompt,
       stream: false,
-      keep_alive: '5m',
+      keep_alive: '30m',
       options: {
         temperature: options.temperature ?? 0.3,
         num_predict: options.maxTokens ?? 120,
