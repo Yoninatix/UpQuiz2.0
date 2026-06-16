@@ -20,7 +20,6 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	r := gin.Default()
 
 	// ── CORS ───────────────────────────────────────────────────────────────
-	// Reflect the request Origin so credentials (cookies) are allowed.
 	r.Use(func(c *gin.Context) {
 		if origin := c.GetHeader("Origin"); origin != "" {
 			c.Header("Access-Control-Allow-Origin", origin)
@@ -52,7 +51,7 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	authH := handlers.NewAuthHandler(userRepo, cfg)
 	subjectH := handlers.NewSubjectHandler(subjectRepo, userRepo)
 	docH := handlers.NewDocumentHandler(docRepo, cfg)
-	questionH := handlers.NewQuestionHandler(questionRepo)
+	questionH := handlers.NewQuestionHandler(questionRepo, cfg)
 	examH := handlers.NewExamHandler(examRepo)
 	attemptH := handlers.NewAttemptHandler(attemptRepo, scorer)
 	analyticsH := handlers.NewAnalyticsHandler(analyticsRepo)
@@ -96,6 +95,7 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	questions.GET("", middleware.RequireRole("educator", "admin"), questionH.List)
 	questions.POST("/bulk", middleware.RequireRole("educator", "admin"), questionH.BulkCreate)
 	questions.PATCH("/:id/approve", middleware.RequireRole("educator", "admin"), questionH.Approve)
+	questions.POST("/:id/fill-choices", middleware.RequireRole("educator", "admin"), questionH.FillChoices)
 	questions.PUT("/:id", middleware.RequireRole("educator", "admin"), questionH.Update)
 	questions.DELETE("/:id", middleware.RequireRole("educator", "admin"), questionH.Delete)
 

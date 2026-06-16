@@ -1,8 +1,14 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"time"
 
+	"github.com/ccsthesis/examplatform/internal/config"
 	"github.com/ccsthesis/examplatform/internal/models"
 	"github.com/ccsthesis/examplatform/internal/repository"
 	"github.com/gin-gonic/gin"
@@ -11,10 +17,20 @@ import (
 
 type QuestionHandler struct {
 	questionRepo repository.QuestionRepository
+	aiServiceURL string
+	httpClient   *http.Client
 }
 
-func NewQuestionHandler(questionRepo repository.QuestionRepository) *QuestionHandler {
-	return &QuestionHandler{questionRepo: questionRepo}
+func NewQuestionHandler(questionRepo repository.QuestionRepository, cfg ...*config.Config) *QuestionHandler {
+	aiURL := "http://ai-service:3001"
+	if len(cfg) > 0 && cfg[0] != nil {
+		aiURL = cfg[0].AIServiceURL
+	}
+	return &QuestionHandler{
+		questionRepo: questionRepo,
+		aiServiceURL: aiURL,
+		httpClient:   &http.Client{Timeout: 5 * time.Minute},
+	}
 }
 
 // GET /api/questions?subject_id=<uuid>&approved=true
@@ -38,8 +54,6 @@ func (h *QuestionHandler) List(c *gin.Context) {
 }
 
 // POST /api/questions/bulk
-// Body: { subject_id, questions: [...] }
-// Called by the frontend after RAG generation to persist questions.
 func (h *QuestionHandler) BulkCreate(c *gin.Context) {
 	var body struct {
 		SubjectID string `json:"subject_id" binding:"required"`
@@ -146,6 +160,62 @@ func (h *QuestionHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "question updated"})
+}
+
+// POST /api/questions/:id/fill-choices
+func (h *QuestionHandler) FillChoices(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid question id"})
+		return
+	}
+
+	q, err := h.questionRepo.FindByID(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "question not found"})
+		return
+	}
+
+	payload, _ := json.Marshal(map[string]string{
+		"question_text":  q.QuestionText,
+		"correct_answer": q.CorrectAnswer,
+	})
+	url := fmt.Sprintf("%s/api/rag/fill-choices", h.aiServiceURL)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not build AI request"})
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI service unavailable: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		c.Data(resp.StatusCode, "application/json", body)
+		return
+	}
+
+	var aiResp struct {
+		Choices interface{} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &aiResp); err != nil || aiResp.Choices == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid AI response"})
+		return
+	}
+
+	q.Choices = aiResp.Choices
+	if err := h.questionRepo.Update(c.Request.Context(), q); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"choices": aiResp.Choices})
 }
 
 // DELETE /api/questions/:id

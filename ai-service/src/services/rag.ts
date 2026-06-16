@@ -323,6 +323,31 @@ function parseQuestions(
     .map(q => {
       let choices = q.choices ?? null;
       let correctAnswer = normalizeAnswer(cfg.type, String(q.correct_answer ?? ''));
+
+      // ── Normalize MCQ choices to [{key, text}] format ──────────────────────
+      if (cfg.type === 'multiple_choice' && choices) {
+        if (!Array.isArray(choices)) {
+          // Object format: {"A":"Joule","B":"Newton",...} → array
+          choices = Object.entries(choices as Record<string, string>)
+            .map(([k, v]) => ({ key: k.toUpperCase(), text: String(v) }))
+            .sort((a, b) => a.key.localeCompare(b.key));
+        } else {
+          // Array format: normalize each item in case it's a string or odd shape
+          choices = (choices as any[]).map((c, i) => {
+            if (typeof c === 'string') return { key: String.fromCharCode(65 + i), text: c };
+            if (c && typeof c === 'object') {
+              if (typeof c.key === 'string' && c.text !== undefined)
+                return { key: c.key.toUpperCase(), text: String(c.text) };
+              // e.g. {"A":"Joule"} — single-entry object
+              const entries = Object.entries(c as Record<string, unknown>);
+              if (entries.length >= 1 && /^[A-Da-d]$/.test(String(entries[0][0])))
+                return { key: String(entries[0][0]).toUpperCase(), text: String(entries[0][1]) };
+            }
+            return { key: String.fromCharCode(65 + i), text: String(c ?? '') };
+          });
+        }
+      }
+
       if (cfg.type === 'matching' && (!choices || (Array.isArray(choices) && choices.length === 0))) {
         const parsedPairs = parseMatchingPairs(correctAnswer);
         if (parsedPairs) {
