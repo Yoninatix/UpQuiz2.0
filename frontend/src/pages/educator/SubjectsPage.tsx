@@ -50,7 +50,7 @@ export default function SubjectsPage() {
   const subjectLinks = (id: string) => [
     { to: `/educator/subjects/${id}/documents`,  label: 'Documents',  icon: FileText,       color: 'text-blue-600    hover:bg-blue-50' },
     { to: `/educator/subjects/${id}/questions`,  label: 'Questions',  icon: Sparkles,       color: 'text-violet-600  hover:bg-violet-50' },
-    { to: `/educator/subjects/${id}/exams`,      label: 'Exams',      icon: BookOpen,       color: 'text-emerald-600 hover:bg-emerald-50' },
+    { to: `/educator/subjects/${id}/questions?tab=exams`, label: 'Exams', icon: BookOpen, color: 'text-emerald-600 hover:bg-emerald-50' },
     { to: `/educator/subjects/${id}/analytics`,  label: 'Analytics',  icon: BarChart2,      color: 'text-rose-600    hover:bg-rose-50' },
   ];
 

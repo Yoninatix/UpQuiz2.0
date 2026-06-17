@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/ccsthesis/examplatform/internal/config"
@@ -209,13 +210,72 @@ func (h *QuestionHandler) FillChoices(c *gin.Context) {
 		return
 	}
 
+	// Detect which letter slot (A/B/C/D) holds the correct answer,
+	// then persist that letter as the new correct_answer.
+	correctKey := detectCorrectKey(aiResp.Choices, q.CorrectAnswer)
+	if correctKey != "" {
+		q.CorrectAnswer = correctKey
+	}
+
 	q.Choices = aiResp.Choices
 	if err := h.questionRepo.Update(c.Request.Context(), q); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"choices": aiResp.Choices})
+	c.JSON(http.StatusOK, gin.H{"choices": aiResp.Choices, "correct_key": correctKey})
+}
+
+// detectCorrectKey matches the stored correctAnswer text against the AI-generated
+// choices and returns the letter key (A/B/C/D) of the matching choice.
+func detectCorrectKey(choices interface{}, correctAnswer string) string {
+	norm := func(s string) string {
+		return strings.ToLower(strings.TrimSpace(s))
+	}
+	target := norm(correctAnswer)
+	if target == "" {
+		return ""
+	}
+
+	tryMatch := func(key, text string) string {
+		t := norm(text)
+		if t == "" {
+			return ""
+		}
+		if t == target || strings.Contains(t, target) || strings.Contains(target, t) {
+			return strings.ToUpper(key)
+		}
+		return ""
+	}
+
+	// Array format: [{"key":"A","text":"..."}, ...]
+	if arr, ok := choices.([]interface{}); ok {
+		for i, item := range arr {
+			m, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			key := fmt.Sprintf("%c", 'A'+i)
+			if k, ok := m["key"].(string); ok && k != "" {
+				key = k
+			}
+			text := fmt.Sprintf("%v", m["text"])
+			if hit := tryMatch(key, text); hit != "" {
+				return hit
+			}
+		}
+	}
+
+	// Object format: {"A":"...","B":"...",...}
+	if obj, ok := choices.(map[string]interface{}); ok {
+		for key, val := range obj {
+			if hit := tryMatch(key, fmt.Sprintf("%v", val)); hit != "" {
+				return hit
+			}
+		}
+	}
+
+	return ""
 }
 
 // DELETE /api/questions/:id

@@ -107,7 +107,9 @@ func New(cfg *config.Config, db *pgxpool.Pool) *gin.Engine {
 	auth.GET("/exams", examH.List)
 	auth.GET("/exams/:id", examH.GetByID)
 	auth.GET("/exams/:id/questions", examH.GetQuestions)
+	auth.PUT("/exams/:id", middleware.RequireRole("educator", "admin"), examH.Update)
 	auth.PATCH("/exams/:id/status", middleware.RequireRole("educator", "admin"), examH.UpdateStatus)
+	auth.DELETE("/exams/:id", middleware.RequireRole("educator", "admin"), examH.Delete)
 
 	// ─ Student exam flow ─────────────────────────────────────────────────────
 	auth.GET("/student/exams", middleware.RequireRole("student"), examH.ListForStudent)

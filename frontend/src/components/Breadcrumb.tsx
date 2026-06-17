@@ -11,10 +11,8 @@ const SEGMENT_LABELS: Record<string, string> = {
   questions: 'Questions',
   generate:  'Questions',
   review:    'Questions',
-  exams:     'Exams',
   analytics: 'Analytics',
   users:     'Users',
-  create:    'Create Exam',
 };
 
 export default function Breadcrumb() {

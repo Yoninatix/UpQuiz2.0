@@ -16,8 +16,6 @@ import EducatorDashboard from './pages/educator/EducatorDashboard';
 import SubjectsPage from './pages/educator/SubjectsPage';
 import DocumentsPage from './pages/educator/DocumentsPage';
 import QuestionsPage from './pages/educator/QuestionsPage';
-import CreateExamPage from './pages/educator/CreateExamPage';
-import ExamListPage from './pages/educator/ExamListPage';
 import AnalyticsPage from './pages/educator/AnalyticsPage';
 
 // ── Student pages ────────────────────────────────────────────
@@ -71,8 +69,8 @@ export default function App() {
             <Route path="subjects" element={<SubjectsPage />} />
             <Route path="subjects/:subjectId/documents" element={<DocumentsPage />} />
             <Route path="subjects/:subjectId/questions" element={<QuestionsPage />} />
-            <Route path="subjects/:subjectId/exams/create" element={<CreateExamPage />} />
-            <Route path="subjects/:subjectId/exams" element={<ExamListPage />} />
+            <Route path="subjects/:subjectId/exams" element={<QuestionsPage />} />
+            <Route path="subjects/:subjectId/exams/create" element={<QuestionsPage />} />
             <Route path="subjects/:subjectId/analytics" element={<AnalyticsPage />} />
             {/* legacy */}
             <Route path="subjects/:subjectId/generate" element={<QuestionsPage />} />
